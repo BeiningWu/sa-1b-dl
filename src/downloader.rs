@@ -140,31 +140,22 @@ impl Downloader {
             let is_valid = if let Some(expected) = total_bytes {
                 actual_size == expected
             } else {
-                true
+                actual_size > 0
             };
 
-            {
-                let mut state = state.lock().unwrap();
-                state.completed = true;
-                state.downloaded_bytes = actual_size;
-            }
-
             if is_valid {
+                {
+                    let mut state = state.lock().unwrap();
+                    state.completed = true;
+                    state.downloaded_bytes = actual_size;
+                }
                 pb.set_message("Skipped (valid)");
+                pb.finish();
+                return Ok(());
             } else {
-                pb.set_message("Skipped (size mismatch!)");
+                fs::remove_file(&output_path)?;
+                pb.set_message("Removed invalid file, re-downloading...");
             }
-            pb.finish();
-
-            if !is_valid {
-                return Err(anyhow!(
-                    "Existing file size mismatch for {}: expected {} bytes, got {} bytes",
-                    entry.file_name,
-                    total_bytes.unwrap_or(0),
-                    actual_size
-                ));
-            }
-            return Ok(());
         }
 
         let mut current_pos = 0u64;
@@ -248,7 +239,7 @@ impl Downloader {
         let is_valid = if expected_size > 0 {
             actual_size == expected_size
         } else {
-            true
+            actual_size > 1024
         };
 
         self.finalize_download(entry, state, pb, total_bytes, is_valid)?;
@@ -282,7 +273,7 @@ impl Downloader {
 
         {
             let mut state = state.lock().unwrap();
-            state.completed = true;
+            state.completed = is_valid;
             state.downloaded_bytes = actual_size;
         }
 
@@ -339,12 +330,14 @@ impl Downloader {
 
                 {
                     let mut states = states.lock().unwrap();
-                    if let Some(existing) = states.iter_mut().find(|s| s.file_name == entry.file_name)
-                    {
-                        let current_state = state.lock().unwrap().clone();
-                        *existing = current_state;
-                    } else {
-                        states.push(state.lock().unwrap().clone());
+                    if result.is_ok() {
+                        if let Some(existing) = states.iter_mut().find(|s| s.file_name == entry.file_name)
+                        {
+                            let current_state = state.lock().unwrap().clone();
+                            *existing = current_state;
+                        } else {
+                            states.push(state.lock().unwrap().clone());
+                        }
                     }
                 }
 
